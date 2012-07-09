@@ -9,15 +9,15 @@ $VERSION = '1.2';
 
 # configure some basic big number stuff
 Math::BigInt  ->config({
-   upgrade    => 'Math::BigFloat',
-   round_mode => 'common',
-   trap_nan   => 1,
-   trap_inf   => 1,
+  upgrade    => 'Math::BigFloat',
+  round_mode => 'common',
+  trap_nan   => 1,
+  trap_inf   => 1,
 });
 Math::BigFloat->config({
-   round_mode => 'common',
-   trap_nan   => 1,
-   trap_inf   => 1,
+  round_mode => 'common',
+  trap_nan   => 1,
+  trap_inf   => 1,
 });
 
 sub new {
@@ -71,7 +71,8 @@ sub _digitsets {
 sub from_base {
   my ($self, $str) = @_;
   my ($nc, $fc) = @$self{qw(neg_char radix_char)};
-  return -1*$self->from_base($str) if $nc && $str =~ s/^\Q$nc\E//; # Handle negative numbers
+  return $self->_from_accurate_return( Math::BigFloat->new( $self->from_base($str) )->bneg() )
+    if $nc && $str =~ s/^\Q$nc\E//;  # Handle negative numbers
 
   # number clean up + decimal checks
   my $base = @{$self->{digits}};
@@ -80,16 +81,11 @@ sub from_base {
   $str =~ s/^\Q$zero\E+//;
   $str =~ s/\Q$zero\E+$// if ($is_dec);
 
-  # upgrade doesn't work as well as it should...
-  ## no critic (TestingAndDebugging::ProhibitNoStrict)
-  no strict 'subs';
-  my $big_class = $is_dec ? Math::BigFloat : Math::BigInt;
-  use strict 'subs';
-
   # num of digits + big number support
   my $poten_digits = int(length($str) * $self->{digit_strength}) + 16;
-  $big_class->accuracy($poten_digits + 16);
-  my $result = $big_class->new(0);
+  Math::BigFloat->accuracy($poten_digits + 16);
+  my $result = Math::BigFloat->new(0);
+  $result = $result->as_int() unless $is_dec;
 
   # short-circuits
   unless ($is_dec || !$self->{digitset_name}) {
@@ -109,40 +105,44 @@ sub from_base {
       my $v = $self->{trans}{$1};
       croak "Invalid character $1 in string!" unless defined $v;
 
-      my $exp = $big_class->new($base);
+      my $exp = Math::BigInt->new($base);
       $result = $exp->bpow($i)->bmul($v)->badd($result);
       $i--;  # may go into the negative for non-ints
     }
   }
 
+  return $self->_from_accurate_return($result);
+}
+
+sub _from_accurate_return {
+  my ($self, $result) = @_;
+
   # never lose the accuracy
   my $rscalar = $result->numify();
   my $rstring = $result->bstr();
   $rstring =~ s/0+$// if ($rstring =~ /\./);
+  $rstring =~ s/\.$//;  # float to whole number
   # (the user can choose to put the string in a Math object if s/he so wishes)
-  return $rstring eq ($rscalar + 0 . '') ? $result->numify() : $result->bstr();
+  return $rstring eq ($rscalar + 0 . '') ? $result->numify() : $rstring;
 }
 
 sub to_base {
-  my ($self,$num) = @_;
-  return $self->{neg_char}.$self->to_base(-1*$num) if $num<0; # Handle negative numbers
+  my ($self, $num) = @_;
 
   # decimal checks
   my $base = scalar @{$self->{digits}};
-  $num = int($num) unless $self->{radix_char};  # can't use floats, so truncate
   my $is_dec = ($num =~ /\./) ? 1 : 0;
+  $is_dec = 0 unless $self->{radix_char};
   my $zero = $self->{digits}[0];
-
-  # upgrade doesn't work as well as it should...
-  ## no critic (TestingAndDebugging::ProhibitNoStrict)
-  no strict 'subs';
-  my $big_class = $is_dec ? Math::BigFloat : Math::BigInt;
-  use strict 'subs';
 
   # num of digits + big number support
   my $poten_digits = length($num);
-  $big_class->accuracy($poten_digits + 16);
-  $num = $big_class->new($num);
+  Math::BigFloat->accuracy($poten_digits + 16);
+  $num = Math::BigFloat->new($num);
+  $num = $num->as_int() unless $is_dec && $self->{radix_char};
+
+  # (hold off on this check until after the big number support)
+  return $self->{neg_char}.$self->to_base( $num->bneg ) if $num < 0;  # Handle negative numbers
 
   # short-circuits
   return $zero if ($num == 0);  # this confuses log, so let's just get rid of this quick
@@ -163,7 +163,8 @@ sub to_base {
   # BigFloat's accuracy should counter this, but the $i check is
   # to make sure we don't get into an irrational/cyclic number loop
   while (($num != 0 || $i >= 0) && $i > -1024) {
-    my $exp = $big_class->new($base)->bpow($i);
+    my $exp = Math::BigFloat->new($base);
+    $exp    = $i < 0 ? $exp->bpow($i) : $exp->as_int->bpow($i);
     my $v   = $num->copy()->bdiv($exp)->bfloor();
     $num   -= $v * $exp;  # this method is safer for fractionals
 

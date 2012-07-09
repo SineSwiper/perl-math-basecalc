@@ -2,7 +2,8 @@
 
 use strict;
 use warnings;
-use Test::More tests => (6 * 42) + 1;
+use Test::More tests => (6 * 44) + 1;
+use Math::BigFloat;
 my $class = 'Math::BaseCalc';
 use_ok($class);
 
@@ -14,8 +15,10 @@ push(@calcs, new_ok( $class => [ digits=>[ '0', '&' ], neg_char => '~', radix_ch
 push(@calcs, new_ok( $class => [ digits=>[ '0', '-' ], neg_char => '~', radix_char => ',' ]) );
 push(@calcs, new_ok( $class => [ digits=>[ '0', '.' ], neg_char => '~', radix_char => ',' ]) );
 
+my $bignum = Math::BigFloat->new('999999999999999999999999');
+
 for my $calcX ( @calcs ) {
-  for my $s (-20..20) {
+  for my $s ($bignum->bneg(), -20..20, $bignum) {
     my $source = $s / 2;
     my $in_base_X  = $calcX->to_base( $source );
     my $in_base_10 = $calcX->from_base( $in_base_X );
@@ -25,6 +28,10 @@ for my $calcX ( @calcs ) {
     $expect = abs($expect) unless ($calcX->{neg_char});
     $expect = int($expect) unless ($calcX->{radix_char});
 
-    is $in_base_10, $expect, "from( to ( $source ) == $in_base_X --> $expect (using ".join(',', $calcX->digits).")";
+    # fix unnecessary zeros
+    $expect =~ s/0+$// if ($expect =~ /\./);
+    $expect =~ s/\.$//;  # float to whole number
+
+    is $in_base_10, $expect, "from( to ( $source ) == $in_base_X ) --> $expect (using ".join(',', $calcX->digits).")";
   }
 }
