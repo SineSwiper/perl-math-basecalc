@@ -4,8 +4,9 @@ use strict;
 use Carp;
 use Math::BigInt;
 use Math::BigFloat;
+use Scalar::Util;
 use vars qw($VERSION);
-$VERSION = '1.2';
+$VERSION = '1.20';
 
 # configure some basic big number stuff
 Math::BigInt  ->config({
@@ -85,7 +86,10 @@ sub from_base {
   my $poten_digits = int(length($str) * $self->{digit_strength}) + 16;
   Math::BigFloat->accuracy($poten_digits + 16);
   my $result = Math::BigFloat->new(0);
-  $result = $result->as_int() unless $is_dec;
+  unless ($is_dec) {
+    Math::BigInt->accuracy($poten_digits + 16);
+    $result = Math::BigInt->new( $result->ffround(0, 'trunc')->bstr() );  # as_int loses precision on older BigFloats
+  }
 
   # short-circuits
   unless ($is_dec || !$self->{digitset_name}) {
@@ -117,13 +121,20 @@ sub from_base {
 sub _from_accurate_return {
   my ($self, $result) = @_;
 
+  # Prior to 1.997, Math::BigFloat->numify would always return scientific
+  # notation, even for the simpliest of numbers.  This would cause test
+  # failures and just look ugly in general.  Since we still want to
+  # support older Perls with core modules, this dualvar workaround was
+  # necessary to maintain accuracy and still look reasonable as a string.
+
   # never lose the accuracy
   my $rscalar = $result->numify();
   my $rstring = $result->bstr();
   $rstring =~ s/0+$// if ($rstring =~ /\./);
   $rstring =~ s/\.$//;  # float to whole number
-  # (the user can choose to put the string in a Math object if s/he so wishes)
-  return $rstring eq ($rscalar + 0 . '') ? $result->numify() : $rstring;
+
+  # (the user can choose to put the scalar in a Math object if s/he so wishes)
+  return Scalar::Util::dualvar($rscalar, $rstring);
 }
 
 sub to_base {
@@ -139,7 +150,10 @@ sub to_base {
   my $poten_digits = length($num);
   Math::BigFloat->accuracy($poten_digits + 16);
   $num = Math::BigFloat->new($num);
-  $num = $num->as_int() unless $is_dec && $self->{radix_char};
+  unless ($is_dec && $self->{radix_char}) {
+    Math::BigInt->accuracy($poten_digits + 16);
+    $num = Math::BigInt->new( $num->ffround(0, 'trunc')->bstr() );  # as_int loses precision on older BigFloats
+  }
 
   # (hold off on this check until after the big number support)
   return $self->{neg_char}.$self->to_base( $num->bneg ) if $num < 0;  # Handle negative numbers
@@ -163,8 +177,8 @@ sub to_base {
   # BigFloat's accuracy should counter this, but the $i check is
   # to make sure we don't get into an irrational/cyclic number loop
   while (($num != 0 || $i >= 0) && $i > -1024) {
-    my $exp = Math::BigFloat->new($base);
-    $exp    = $i < 0 ? $exp->bpow($i) : $exp->as_int->bpow($i);
+    my $exp = $i < 0 ? Math::BigFloat->new($base) : Math::BigInt->new($base);
+    $exp    = $exp->bpow($i);
     my $v   = $num->copy()->bdiv($exp)->bfloor();
     $num   -= $v * $exp;  # this method is safer for fractionals
 
@@ -193,7 +207,7 @@ Math::BaseCalc - Convert numbers between various bases
 
 =head1 VERSION
 
-version 1.2
+version 1.20
 
 =head1 SYNOPSIS
 
@@ -276,14 +290,14 @@ If C<NUMBER> is a C<Math::BigInt> object, C<to_base()> will still work
 fine and give you an exact result string.  In fact, Math::Big* is loaded in
 the background, so big numbers are fully supported.
 
-As of v1.2, C<to_base()> will give you fractional results if passed a
+As of v1.20, C<to_base()> will give you fractional results if passed a
 fractional number, provided that the radix point character is still
 available to use.
 
 =item * $calc->from_base(STRING)
 
 Converts a string representing a number in the associated base to a
-Perl number.  Unlike versions prior to v1.2, C<from_base()> will fatally
+Perl number.  Unlike versions prior to v1.20, C<from_base()> will fatally
 die if given a character not in $calc's digit set.  Hence, if this is a
 problem, you should clean your strings (including whitespace) prior to
 conversion.
@@ -293,7 +307,7 @@ that the radix point character is still available to use.  Negative
 strings are supported, provided that the negative character is still
 available to use.
 
-Large numbers are also fully supported, as of v1.2.  The exact type of
+Large numbers are also fully supported, as of v1.20.  The exact type of
 scalar returned depends on the size of the number.  If Perl cannot safely
 represent the exact number, a string scalar is returned instead.  Note that
 C<from_base()> will never return an object, such as a Math::BigInt object,
